@@ -6,14 +6,15 @@ import json
 import os
 from typing import Any, Dict, Optional, Union
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.parse import urlencode, urlparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from . import ecowitt
 from ._version import __version__
 from .ecowitt import Number, When
 
 API = "https://api.nuasense.com"
+API_HOST = "api.nuasense.com"
 DATA = API + "/api/nuasense/v1"
 ANALYSIS = API + "/api/partner/v1/market"
 KEY_ENV = "NUASENSE_API_KEY"
@@ -57,9 +58,32 @@ def _body_message(body: Any) -> str:
     return ""
 
 
+class _NoRedirect(HTTPRedirectHandler):
+    """Never follow a redirect: urllib would carry the Authorization header to
+    whatever host the redirect names, and could step down from https. A 3xx
+    comes back as an answer instead."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+        return None
+
+
+_opener = build_opener(_NoRedirect)
+
+
+def urlopen(req: Request, timeout: float = TIMEOUT):
+    return _opener.open(req, timeout=timeout)
+
+
+def _check_url(url: str) -> None:
+    parts = urlparse(url)
+    if parts.scheme != "https" or parts.hostname != API_HOST:
+        raise ValueError(f"nuasense only talks to {API}; refusing {parts.scheme}://{parts.hostname}")
+
+
 def _http(method: str, url: str, headers: Dict[str, str], data: Optional[bytes] = None,
           timeout: float = TIMEOUT):
-    """(status, text, headers) for any answer, also 4xx/5xx."""
+    """(status, text, headers) for any answer, also 3xx/4xx/5xx. Only https://api.nuasense.com."""
+    _check_url(url)
     req = Request(url, data=data, method=method, headers=headers)
     try:
         with urlopen(req, timeout=timeout) as res:
@@ -117,7 +141,7 @@ def send_reading(
         raise NuaSenseError(
             "NuaSense does not know this station token. Copy it again from the console, "
             "or add the station first.", status, text)
-    if status >= 400:
+    if status >= 300:
         raise NuaSenseError(f"NuaSense refused the reading ({status}): {text.strip()[:200]}", status, text)
     return {"sent": True, "status": status, "answer": text.strip(), "fields": fields}
 
@@ -145,7 +169,9 @@ class Client:
         return f"Client(api_key={'set' if self.api_key else 'missing'})"
 
     def get(self, url: str, params: Optional[Params] = None) -> Any:
-        """GET any NuaSense URL with the key; returns the parsed JSON."""
+        """GET a URL under https://api.nuasense.com with the key; returns the parsed JSON.
+        Any other host is refused before the key leaves the machine."""
+        _check_url(url)
         query = {k: ("true" if v is True else "false" if v is False else v)
                  for k, v in (params or {}).items() if v is not None and v != ""}
         if query:
@@ -159,7 +185,7 @@ class Client:
             body: Any = json.loads(text) if text else None
         except ValueError:
             body = text
-        if status >= 400:
+        if status >= 300:
             said = _body_message(body)
             hint = _HINTS.get(status, "")
             message = f"NuaSense answered {status}" + (f": {said}" if said else "") + (f". {hint}" if hint else "")

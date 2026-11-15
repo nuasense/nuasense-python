@@ -122,6 +122,23 @@ class ClientTest(unittest.TestCase):
         self.assertIn("daily unit budget spent", str(err))
         self.assertIn("Retry-After", str(err))
 
+    def test_key_never_leaves_for_another_host(self):
+        patch, calls = answering()
+        ns = nuasense.Client("k")
+        with patch:
+            for url in ("https://evil.example/x", "http://api.nuasense.com/api/nuasense/v1/catalog",
+                        "https://api.nuasense.com.evil.example/x"):
+                with self.assertRaisesRegex(ValueError, "only talks to"):
+                    ns.get(url)
+        self.assertEqual(calls, [])
+
+    def test_redirects_are_answers_not_followed(self):
+        self.assertIsNone(mod._NoRedirect().redirect_request(None, None, 302, "Found", {}, "https://evil.example/"))
+        patch, _ = answering((301, ""))
+        with patch, self.assertRaises(nuasense.NuaSenseError) as caught:
+            nuasense.Client("k").catalog()
+        self.assertEqual(caught.exception.status, 301)
+
     def test_missing_key_says_where_to_get_one(self):
         patch, _ = answering((401, {"error": "missing key"}))
         with mock.patch.dict(os.environ, {}, clear=True), patch, \
