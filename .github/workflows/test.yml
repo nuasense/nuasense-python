@@ -11,15 +11,16 @@ permissions:
 
 jobs:
   test:
+    # Official Python images instead of setup-python: the runners no longer
+    # carry 3.9, which Raspberry Pi OS Bullseye still ships.
     runs-on: ubuntu-latest
+    container: python:${{ matrix.python }}-slim
     strategy:
+      fail-fast: false
       matrix:
-        python: ["3.9", "3.11", "3.13"]
+        python: ["3.9", "3.11", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
+      - uses: actions/checkout@v5
       - run: python -m unittest discover -s tests -v
         env:
           PYTHONPATH: src
