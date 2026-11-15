@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nuasense"
+dynamic = ["version"]
+description = "NuaSense for Python: frost, watering and spray advice from your weather station, sending readings from any station you build, and East African farm and market data."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+authors = [{ name = "NuaSense", email = "info@nuasense.com" }]
+keywords = [
+  "weather-station",
+  "raspberry-pi",
+  "frost-warning",
+  "irrigation",
+  "agriculture",
+  "ecowitt",
+  "east-africa",
+  "kenya",
+  "market-data",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Scientific/Engineering :: Atmospheric Science",
+  "Topic :: Home Automation",
+  "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://nuasense.com"
+Documentation = "https://api.nuasense.com/index.md"
+Source = "https://github.com/nuasense/nuasense-python"
+Issues = "https://github.com/nuasense/nuasense-python/issues"
+Changelog = "https://github.com/nuasense/nuasense-python/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "src/nuasense/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nuasense"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/nuasense", "tests", "README.md", "CHANGELOG.md", "LICENSE"]
