@@ -1,6 +1,6 @@
 # nuasense
 
-NuaSense for Python: what your weather station means for house, garden and farm. Frost tonight, how much to water today, the next calm and dry spray window, and a plausibility check of your sensor. Send readings from any station you build (a Raspberry Pi with a BME280, an ESP32, a rain gauge on a GPIO pin), and read East African farm and market data.
+NuaSense for Python: what your sensors mean for house, garden and farm. Frost tonight, how much to water today, the next calm and dry spray window, and a plausibility check of your sensor. Send readings from anything you build (a Raspberry Pi with a BME280, soil moisture probes, a water level sensor, a beehive scale, a cold room), and read East African farm and market data.
 
 ```
 pip install nuasense
@@ -8,27 +8,39 @@ pip install nuasense
 
 Standard library only, Python 3.9 or newer, so it runs on any Raspberry Pi.
 
-## Send readings from your own station
+## Send readings from a sensor you built
 
-In the console at [platform.nuasense.com](https://platform.nuasense.com): **External stations → Add a station**, pick *Home Assistant / weewx / Meteobridge / Node-RED*, and copy the token after `/station/` on the last screen. Sending needs no API key. The first three stations on an account are free.
+In the console at [platform.nuasense.com](https://platform.nuasense.com): **External stations → Add a station → I built it myself**, and copy the token after `/station/` on the last screen. Sending needs no API key. The first three stations on an account are free.
 
 ```python
 import nuasense
 
-nuasense.send_reading(
+nuasense.send(
     "kw7n-4hpd-x2vt",        # your station token
-    device_id="garden-pi",   # any stable name for this device
+    "garden-pi",             # any name for this device; binds the token to it
     temperature=21.4,        # °C
     humidity=63,             # %
-    pressure=1013.2,         # hPa
-    wind_speed=2.1,          # m/s (wind_unit="kmh" for km/h)
-    wind_direction=270,      # degrees
-    rain_total=12.2,         # mm, a counter that only grows
-    solar=412,               # W/m² (or lux=...)
+    pressure=1013.2,         # hPa at the station
+    rain_mm=0.2,             # mm since the previous reading
+    soil_moisture=34,        # % vol
+    soil_moisture_2=41.5,    # a second probe: _2 … _8
+    soil_temperature=18.2,   # °C
 )
 ```
 
-Every value is optional; send what your station measures.
+Send what your sensors measure, every few minutes. The names and units are NuaSense's own, the same as for the [Arduino, ESPHome, MicroPython and Tasmota code](https://github.com/nuasense/station-schema):
+
+| group | fields (unit) |
+|---|---|
+| weather | `temperature` (°C) · `humidity` (%) · `pressure` (hPa) · `light` (lux) · `wind_speed`, `wind_gusts` (m/s) · `wind_direction` (°) · `rain_mm` (mm since the previous reading) · `uv_index` · `leaf_wetness` (%) |
+| soil | `soil_moisture` (% vol) · `soil_temperature` (°C) · `soil_ec` (mS/cm) · `soil_tension` (kPa) · `soil_ph` · `probe_temperature` (°C) |
+| water | `water_level` (m) · `water_temperature` (°C) · `water_ec` (mS/cm) · `water_ph` · `dissolved_oxygen` (mg/L) · `turbidity` (NTU) · `flow_rate` (L/min) · `water_pressure` (bar) |
+| greenhouse, plant | `greenhouse_temperature` (°C) · `greenhouse_humidity` (%) · `co2` (ppm) · `par` (µmol/m²/s) · `leaf_temperature` (°C) · `stem_diameter` (µm) |
+| livestock, beehive | `ammonia` (ppm) · `hive_weight` (kg) · `hive_temperature` (°C) · `hive_humidity` (%) |
+| storage, cold chain | `storage_temperature` (°C) · `storage_humidity` (%) · `ethylene` (ppm) · `grain_moisture` (%) · `grain_temperature` (°C) · `door_open` (0/1) |
+| air, energy, transport | `pm1`, `pm25`, `pm10` (µg/m³) · `voc_index` · `battery_voltage` (V) · `battery_percent` (%) · `power`, `pv_power` (W) · `gps_latitude`, `gps_longitude` (°) · `gps_speed` (km/h) |
+
+A misspelt name raises at once (`NuaSense has no field "soil_moistur". Did you mean soil_moisture?`). A value outside its range, usually a sensor fault such as a DS18B20 reading -127, is left out and listed under `"skipped"` in the answer, so your loop keeps running.
 
 ### Raspberry Pi with a BME280
 
@@ -44,15 +56,22 @@ TOKEN = "kw7n-4hpd-x2vt"
 bme = adafruit_bme280.Adafruit_BME280_I2C(board.I2C())
 
 while True:
-    nuasense.send_reading(
-        TOKEN,
-        device_id="garden-pi",
-        temperature=bme.temperature,
-        humidity=bme.relative_humidity,
-        pressure=bme.pressure,
-    )
+    try:
+        nuasense.send(
+            TOKEN,
+            "garden-pi",
+            temperature=bme.temperature,
+            humidity=bme.relative_humidity,
+            pressure=bme.pressure,
+        )
+    except nuasense.NuaSenseError as err:   # offline, or the token is wrong
+        print(err)
     time.sleep(300)
 ```
+
+### Bridging a weather console
+
+`nuasense.send_reading(token, device_id=..., temperature=..., rain_total=...)` sends the form a weather console sends (Ecowitt format, rain as a running total). Use it when you forward a console's values; pick *Home Assistant / weewx / Meteobridge / Node-RED* in the console. For anything you build, `send()` is the better fit.
 
 ## What your station means: frost, watering, spray window
 
@@ -110,7 +129,7 @@ When you connect a station, NuaSense stores its readings and computes your forec
 
 ## Development
 
-`python -m unittest discover -s tests` (with `PYTHONPATH=src`). Releases: bump `src/nuasense/_version.py` and `CHANGELOG.md`, push a tag `vX.Y.Z`; GitHub Actions tests, builds and publishes to PyPI by Trusted Publishing.
+`python -m unittest discover -s tests` (with `PYTHONPATH=src`). `src/nuasense/reading.schema.json` is a copy of [station-schema](https://github.com/nuasense/station-schema)'s `nuasense-reading.schema.json`; update both together. Releases: bump `src/nuasense/_version.py` and `CHANGELOG.md`, push a tag `vX.Y.Z`; GitHub Actions tests, builds and publishes to PyPI by Trusted Publishing.
 
 ## License
 

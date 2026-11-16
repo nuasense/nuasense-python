@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, Optional, Union
+import re
+from typing import Any, Dict, Mapping, Optional, Union
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from . import ecowitt
+from . import ecowitt, reading
 from ._version import __version__
 from .ecowitt import Number, When
 
@@ -98,6 +99,61 @@ def _http(method: str, url: str, headers: Dict[str, str], data: Optional[bytes] 
         raise NuaSenseError(f"Could not reach NuaSense: {err.reason}") from err
 
 
+_SEND_ANSWERS = {
+    400: "NuaSense found nothing readable in the reading.",
+    404: "NuaSense does not know this station token. Copy it again from the console "
+         '(External stations → Add a station → "I built it myself"), or add the station first.',
+    409: "This token belongs to another device: the first device_id that used it. "
+         "Use that device_id again, or add a second station for this device.",
+    429: "Too many uploads. Send every few minutes; uploads less than a minute apart are dropped anyway.",
+}
+
+
+def send(
+    token: str,
+    device_id: str,
+    values: Optional[Mapping[str, Any]] = None,
+    *,
+    timeout: float = TIMEOUT,
+    **more: Any,
+) -> Dict[str, Any]:
+    """Send one reading from a sensor you built. Needs no API key, only the station token.
+
+        nuasense.send("kw7n-4hpd-x2vt", "garden-pi", temperature=21.4, soil_moisture=34)
+        nuasense.send("kw7n-4hpd-x2vt", "garden-pi", {"soil_moisture": 34, "soil_moisture_2": 41.5})
+
+    Names and units are NuaSense's own (weather, soil, water, greenhouse,
+    beehive, storage, air, energy; several sensors as soil_moisture_2 … _8):
+    https://github.com/nuasense/station-schema. device_id is any name for the
+    device (4 characters or more); it binds the token to this device. The time
+    is the moment NuaSense receives the reading. rain_mm is the rain since the
+    previous reading.
+
+    Returns {"sent", "status", "answer", "values", "skipped"}; "skipped" lists
+    values left out as impossible (usually a sensor fault). A reading with no
+    value left is not sent.
+    """
+    url = ecowitt.upload_url(token)
+    device = str(device_id or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{4,48}", device):
+        raise ValueError("device_id: 4 to 48 letters, digits or . _ : - (e.g. garden-pi). It binds the token to this device.")
+    merged: Dict[str, Any] = dict(values or {})
+    merged.update(more)
+    clean, skipped = reading.check(merged)
+    if not clean:
+        return {"sent": False, "status": None, "answer": "nothing to send", "values": {}, "skipped": skipped}
+    body = {"device_id": device, "software": USER_AGENT, **clean}
+    status, text, _ = _http(
+        "POST", url,
+        {"Content-Type": "application/json", "X-NuaSense-Client": CLIENT, "User-Agent": USER_AGENT},
+        json.dumps(body).encode("utf-8"), timeout,
+    )
+    if status >= 300:
+        message = _SEND_ANSWERS.get(status) or f"NuaSense refused the reading ({status}): {text.strip()[:200]}"
+        raise NuaSenseError(message, status, text)
+    return {"sent": True, "status": status, "answer": text.strip(), "values": clean, "skipped": skipped}
+
+
 def send_reading(
     token: str,
     *,
@@ -115,7 +171,11 @@ def send_reading(
     time: When = None,
     timeout: float = TIMEOUT,
 ) -> Dict[str, Any]:
-    """Send one reading from your own station. Needs no API key, only the station token.
+    """Send one weather reading the way a weather console does (Ecowitt form). No API key.
+
+    For a bridge from a console or a script that keeps console-style values:
+    rain as a running total. For a sensor you build, use send(): every field
+    (soil, water, greenhouse …), rain since the last reading.
 
     Units: temperature °C, humidity %, pressure hPa, wind m/s (or km/h with
     wind_unit="kmh"), wind_direction degrees, rain_total mm as a counter that
